@@ -3469,7 +3469,7 @@
       const profileLabel = root.querySelector('[data-role="smartMatchProfileLabel"]');
       if (profileLabel) {
         profileLabel.textContent = config.smartMatchMode === 'smart'
-          ? '我的描述（发送给模型用于比对）'
+          ? '我的描述（发送给模型用于比对，可选）'
           : '我的技能 / 关键词（每行或逗号分隔）';
       }
       this.applyJdMatchCustomApiVisibility();
@@ -3577,15 +3577,15 @@
 
       runtime.ui.fastReplyList.innerHTML = matchedReplies.length
         ? matchedReplies.map((item) => {
-            const selectedClass = item.index === selectedIndex ? ' za-selected' : '';
-            const selectedLabel = item.index === selectedIndex ? '<span class="za-fast-reply-selected-mark">当前选中</span>' : '';
-            return `
+          const selectedClass = item.index === selectedIndex ? ' za-selected' : '';
+          const selectedLabel = item.index === selectedIndex ? '<span class="za-fast-reply-selected-mark">当前选中</span>' : '';
+          return `
               <button type="button" class="za-fast-reply-option${selectedClass}" data-action="selectFastReply" data-index="${item.index}" aria-pressed="${item.index === selectedIndex ? 'true' : 'false'}">
                 <span class="za-fast-reply-option-meta">常用语 ${item.index + 1}${selectedLabel}</span>
                 <span class="za-fast-reply-option-text">${escapeHtml(item.text)}</span>
               </button>
             `;
-          }).join('')
+        }).join('')
         : `<div class="za-fast-reply-empty">${replies.length ? '没有匹配的常用语' : '暂无常用语，请先刷新'}</div>`;
     },
 
@@ -3647,9 +3647,9 @@
       const running = runtime.ui.root.classList.contains('za-running');
       runtime.ui.companyBlacklistOptionMenu.innerHTML = rules.length
         ? rules.map((rule) => {
-            const checked = selectedIds.has(rule.id) ? ' checked' : '';
-            const disabled = running ? ' disabled' : '';
-            return `
+          const checked = selectedIds.has(rule.id) ? ' checked' : '';
+          const disabled = running ? ' disabled' : '';
+          return `
               <div class="za-multi-option za-blacklist-option">
                 <label class="za-blacklist-option-label">
                   <input data-role="companyBlacklistRuleOption" type="checkbox" value="${escapeHtml(rule.id)}"${checked}${disabled}>
@@ -3658,7 +3658,7 @@
                 <button class="za-blacklist-delete" type="button" data-action="removeCompanyBlacklistRule" data-id="${escapeHtml(rule.id)}" title="删除该黑名单"${disabled}>×</button>
               </div>
             `;
-          }).join('')
+        }).join('')
         : '<div class="za-empty-text">暂无公司黑名单</div>';
 
       if (runtime.ui.companyBlacklistDropdownText) {
@@ -4264,35 +4264,11 @@
           data: method === 'GET' || method === 'HEAD' ? undefined : body,
           timeout: 30000,
           onload(res) {
-            if (res.status >= 200 && res.status < 300) {
-              resolve(res.responseText || '');
-              return;
-            }
-            // 提炼常见状态码的可操作提示，避免只抛一个冷冰冰的数字。
-            let hint = '';
-            if (res.status === 400) hint = '（请求参数有误，可能是模型名不被支持）';
-            else if (res.status === 401) hint = '（API Key 无效或已过期，请重新检查密钥）';
-            else if (res.status === 402) hint = '（账户余额不足 / 未开通付费，请到对应厂商控制台充值后再试）';
-            else if (res.status === 403) hint = '（无权限，密钥可能无权访问该模型或接口）';
-            else if (res.status === 404) hint = '（接口地址或模型名不存在，请检查厂商与模型名称）';
-            else if (res.status === 429) hint = '（请求过于频繁已被限流，请稍后重试）';
-            let detail = '';
-            try {
-              const raw = String(res.responseText || '').trim();
-              if (raw) {
-                // 尽量取厂商返回的 message 字段，便于定位；超出长度则截断。
-                let msg = raw;
-                try {
-                  const parsed = JSON.parse(raw);
-                  msg = parsed && parsed.error && (parsed.error.message || parsed.error.code) ? String(parsed.error.message) : raw;
-                } catch (_) {}
-                detail = `：${msg.slice(0, 240)}`;
-              }
-            } catch (_) {}
-            reject(new Error(`匹配接口返回 HTTP ${res.status}${hint}${detail}`));
+            if (res.status >= 200 && res.status < 300) resolve(res.responseText || '');
+            else reject(new Error(`匹配接口返回 HTTP ${res.status}`));
           },
-          onerror() { reject(new Error('智能匹配接口请求失败（可能是网络不通或跨域被拦截）')); },
-          ontimeout() { reject(new Error('智能匹配接口超时（30s 内无响应）')); },
+          onerror() { reject(new Error('智能匹配接口请求失败')); },
+          ontimeout() { reject(new Error('智能匹配接口超时')); },
         });
       });
     },
@@ -4708,9 +4684,9 @@
       const resolved = config.greetingMode === 'fastReply'
         ? await this.resolveFastReplyText(job)
         : {
-            messageType: 'customText',
-            text: await this.resolveCustomText(job),
-          };
+          messageType: 'customText',
+          text: await this.resolveCustomText(job),
+        };
 
       return this.sendText(resolved.text, job, resolved.messageType);
     },
