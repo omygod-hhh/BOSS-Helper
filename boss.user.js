@@ -3469,7 +3469,7 @@
       const profileLabel = root.querySelector('[data-role="smartMatchProfileLabel"]');
       if (profileLabel) {
         profileLabel.textContent = config.smartMatchMode === 'smart'
-          ? '我的描述（发送给模型用于比对，可选）'
+          ? '我的描述（发送给模型用于比对）'
           : '我的技能 / 关键词（每行或逗号分隔）';
       }
       this.applyJdMatchCustomApiVisibility();
