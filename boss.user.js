@@ -53,6 +53,19 @@
     storageQuotaWarnRatio: 0.9,
   };
 
+  // JD 智能匹配厂商预设：用户只需选择厂商 + 填写 API Key 即可，脚本按厂商自动拼装请求。
+  // kind: ollama=本地 / openai=OpenAI 兼容 chat/completions / custom=完全自定义接口。
+  const JD_MATCH_VENDORS = {
+    deepseek: { label: 'DeepSeek', kind: 'openai', baseUrl: 'https://api.deepseek.com/v1/chat/completions', defaultModel: 'deepseek-chat', authHeader: 'Authorization', responsePath: 'choices.0.message.content' },
+    openai: { label: 'OpenAI', kind: 'openai', baseUrl: 'https://api.openai.com/v1/chat/completions', defaultModel: 'gpt-4o-mini', authHeader: 'Authorization', responsePath: 'choices.0.message.content' },
+    qwen: { label: '通义千问（阿里云百炼）', kind: 'openai', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', defaultModel: 'qwen-plus', authHeader: 'Authorization', responsePath: 'choices.0.message.content' },
+    zhipu: { label: '智谱 GLM', kind: 'openai', baseUrl: 'https://open.bigmodel.cn/api/paas/v4/chat/completions', defaultModel: 'glm-4-flash', authHeader: 'Authorization', responsePath: 'choices.0.message.content' },
+    moonshot: { label: 'Kimi（月之暗面）', kind: 'openai', baseUrl: 'https://api.moonshot.cn/v1/chat/completions', defaultModel: 'moonshot-v1-8k', authHeader: 'Authorization', responsePath: 'choices.0.message.content' },
+    doubao: { label: '火山方舟（豆包）', kind: 'openai', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions', defaultModel: 'doubao-seed-1-6', authHeader: 'Authorization', responsePath: 'choices.0.message.content' },
+    ollama: { label: '本地 Ollama（无需 Key）', kind: 'ollama', baseUrl: 'http://localhost:11434/api/generate', defaultModel: 'llama3', authHeader: null, responsePath: 'response' },
+    custom: { label: '自定义接口（高级）', kind: 'custom', baseUrl: '', defaultModel: '', authHeader: null, responsePath: '' },
+  };
+
   // unsafeWindow 是篡改猴注入到页面真实环境的 window；优先用它才能拦截页面自己的 fetch/XHR/history。
   const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
   // 提前保存原始 fetch，后续主动补拉岗位详情时可绕过脚本自己的 fetch 包装。
@@ -121,20 +134,22 @@
     companyBlacklistRules: [],
     bossActiveFilterValues: [],
     bossActiveCustomOptions: [],
-    // JD 智能匹配：手动关键词匹配 / 本地 Ollama 智能匹配 / 自定义接口智能匹配。
+    // JD 智能匹配：手动关键词匹配 / 云端大模型厂商匹配 / 本地 Ollama / 自定义接口。
     smartMatchEnabled: false,
-    smartMatchMode: 'manual', // manual=手动关键词匹配, smart=智能匹配（默认本地 Ollama 预设）
+    smartMatchMode: 'manual', // manual=手动关键词匹配, smart=智能匹配
     smartMatchThreshold: 60, // 0-100，匹配度达到该值才投递
     smartMatchProfile: '', // 手动模式：技能关键词；智能模式：发送给模型用于比对的描述（可选）
-    // 智能匹配默认后端为本地 Ollama，以下参数已写死，无需手动配置。
-    smartMatchUseCustomApi: false, // false=使用本地 Ollama 预设；true=改用下方自定义接口
-    smartMatchModel: 'llama3', // 本地 Ollama 模型名，可用 `ollama list` 查看
-    smartMatchApiUrl: 'http://localhost:11434/api/generate',
+    // 智能匹配：只需选择厂商并填写 API Key 即可，模型名缺省时自动使用厂商默认模型。
+    smartMatchVendor: 'deepseek', // 厂商预设 key，见 JD_MATCH_VENDORS（deepseek/openai/qwen/zhipu/moonshot/doubao/ollama/custom）
+    smartMatchApiKey: '', // 厂商 API Key（ollama 与 custom 可留空）
+    smartMatchModel: '', // 模型名称，留空则用厂商默认模型
+    // 以下仅当 vendor === 'custom'（自定义接口）时使用，普通厂商无需关心。
+    smartMatchApiUrl: '', // 自定义接口地址
     smartMatchApiMethod: 'POST',
     smartMatchApiParams: '',
     smartMatchApiHeaders: '',
-    smartMatchApiBody: '', // 仅自定义接口时使用；Ollama 预设模式下请求体由脚本自动生成
-    smartMatchApiResponsePath: 'response', // Ollama /api/generate 的分数在 response 字段（文本）
+    smartMatchApiBody: '', // 仅自定义接口时使用
+    smartMatchApiResponsePath: '', // 自定义接口返回分数路径，留空自动识别
     exportType: 'json',
     clearBeforeTime: '',
   };
@@ -253,6 +268,8 @@
       .filter((item) => availableKeys.has(normalizeBossActiveText(item)));
     next.featurePanelOpen = Boolean(next.featurePanelOpen);
     next.featureBlocks = normalizeFeatureBlocks(next.featureBlocks);
+
+    next.smartMatchVendor = JD_MATCH_VENDORS[normalizeText(next.smartMatchVendor)] ? normalizeText(next.smartMatchVendor) : 'deepseek';
 
     return next;
   }
@@ -2702,7 +2719,7 @@
             <label class="za-check"><input data-field="smartMatchEnabled" type="checkbox"> 启用 JD 匹配度筛选</label>
             <div class="za-segment" aria-label="匹配方式">
               <label><input type="radio" name="za-jd-match-mode" value="manual"> 手动匹配</label>
-              <label><input type="radio" name="za-jd-match-mode" value="smart"> 智能匹配(本地Ollama)</label>
+              <label><input type="radio" name="za-jd-match-mode" value="smart"> 智能匹配</label>
             </div>
             <div class="za-grid-2">
               <label>匹配阈值(%)<input data-field="smartMatchThreshold" type="number" min="0" max="100" step="5"></label>
@@ -2718,10 +2735,24 @@
             <label class="za-label" data-role="smartMatchProfileLabel">我的技能 / 关键词（每行或逗号分隔）</label>
             <textarea data-field="smartMatchProfile" rows="5" placeholder="例如：&#10;React&#10;TypeScript&#10;前端开发&#10;Node.js"></textarea>
             <div class="za-mode-block" data-jd-match-block="smart">
-              <label class="za-label">本地 Ollama 模型名称</label>
-              <input data-field="smartMatchModel" type="text" placeholder="llama3（可用 ollama list 查看）">
-              <p class="za-hint">默认调用本机 Ollama（http://localhost:11434/api/generate），接口参数已写死，无需配置。只需填写你的模型名即可。</p>
-              <label class="za-check"><input data-field="smartMatchUseCustomApi" type="checkbox"> 改用自定义接口（非 Ollama）</label>
+              <label class="za-label">厂商</label>
+              <select data-field="smartMatchVendor">
+                <option value="deepseek">DeepSeek</option>
+                <option value="openai">OpenAI</option>
+                <option value="qwen">通义千问（阿里云百炼）</option>
+                <option value="zhipu">智谱 GLM</option>
+                <option value="moonshot">Kimi（月之暗面）</option>
+                <option value="doubao">火山方舟（豆包）</option>
+                <option value="ollama">本地 Ollama（无需 Key）</option>
+                <option value="custom">自定义接口（高级）</option>
+              </select>
+              <label class="za-label">API Key
+                <input data-field="smartMatchApiKey" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴厂商 API Key，本地 Ollama 可留空">
+              </label>
+              <label class="za-label">模型名称
+                <input data-field="smartMatchModel" type="text" placeholder="留空则用厂商默认模型">
+              </label>
+              <p class="za-hint" data-role="jdVendorHint">只需选择厂商并填写 API Key 即可，模型名称缺省时自动使用厂商默认模型。</p>
               <div class="za-mode-block" data-jd-custom-api-block>
                 <label class="za-label">匹配接口地址</label>
                 <input data-field="smartMatchApiUrl" type="url" placeholder="https://example.com/match">
@@ -2747,7 +2778,7 @@
                 </label>
               </div>
             </div>
-            <p class="za-hint">达到匹配阈值才会自动投递；低于阈值或被模型判定不匹配则跳过并记录原因。手动匹配按关键词命中率评分，智能匹配由本地 Ollama 返回分数。</p>
+            <p class="za-hint">达到匹配阈值才会自动投递；低于阈值或被模型判定不匹配则跳过并记录原因。手动匹配按关键词命中率评分，智能匹配由所选厂商大模型返回分数。</p>
           </section>
 
           <section class="za-section" data-feature-section="companyBlacklist">
@@ -3059,6 +3090,9 @@
         this.applyModeVisibility();
         this.applyJdMatchModeVisibility();
         this.applyJdMatchCustomApiVisibility();
+        if (event.target && event.target.dataset && event.target.dataset.field === 'smartMatchVendor') {
+          this.applyJdMatchVendorDefaults();
+        }
         // 匹配方式/关键词/模型/接口等变更后，让参考分跟随新配置刷新。
         MatchPreview.syncWithConfig();
       });
@@ -3329,6 +3363,7 @@
       this.applyModeVisibility();
       this.applyJdMatchModeVisibility();
       this.applyJdMatchCustomApiVisibility();
+      this.applyJdMatchVendorDefaults();
       this.renderFeatureBlockControls();
       this.applyFeatureBlockVisibility();
       this.renderDebugLogControls();
@@ -3434,19 +3469,45 @@
       const profileLabel = root.querySelector('[data-role="smartMatchProfileLabel"]');
       if (profileLabel) {
         profileLabel.textContent = config.smartMatchMode === 'smart'
-          ? '我的描述（发送给模型用于比对，可选）'
+          ? '我的描述（发送给模型用于比对）'
           : '我的技能 / 关键词（每行或逗号分隔）';
       }
       this.applyJdMatchCustomApiVisibility();
     },
 
-    // 根据是否「改用自定义接口」显示或隐藏原始 API 配置块（Ollama 预设模式下隐藏，参数已写死）。
+    // 根据厂商显示或隐藏原始自定义接口配置块（仅 vendor === 'custom' 时展示）。
     applyJdMatchCustomApiVisibility() {
       const root = runtime.ui && runtime.ui.root;
       if (!root) return;
+      const showCustom = normalizeText(config.smartMatchVendor) === 'custom';
       root.querySelectorAll('[data-jd-custom-api-block]').forEach((block) => {
-        block.hidden = !config.smartMatchUseCustomApi;
+        block.hidden = !showCustom;
       });
+    },
+
+    // 厂商切换时：模型名留空自动填厂商默认值，并刷新模型占位符与提示文案，真正「只填厂商+Key」。
+    applyJdMatchVendorDefaults() {
+      const root = runtime.ui && runtime.ui.root;
+      if (!root) return;
+      const vendor = JD_MATCH_VENDORS[normalizeText(config.smartMatchVendor)] || JD_MATCH_VENDORS.deepseek;
+      const modelInput = root.querySelector('[data-field="smartMatchModel"]');
+      const hint = root.querySelector('[data-role="jdVendorHint"]');
+      if (modelInput) {
+        if (!normalizeText(modelInput.value) && vendor.defaultModel) {
+          modelInput.value = vendor.defaultModel;
+          saveConfig({ smartMatchModel: vendor.defaultModel });
+        }
+        modelInput.placeholder = vendor.defaultModel ? `默认：${vendor.defaultModel}（可修改）` : '请填写模型名称';
+      }
+      if (hint) {
+        if (vendor.kind === 'ollama') {
+          hint.textContent = `本地 Ollama 无需 API Key；请确保本机已运行 Ollama 且模型 ${vendor.defaultModel} 已拉取。`;
+        } else if (vendor.kind === 'custom') {
+          hint.textContent = '自定义接口：需填写下方完整接口信息（地址/方法/参数/请求头/请求体/分数路径）。';
+        } else {
+          hint.textContent = `已选 ${vendor.label}，仅需填写 API Key 即可（模型名缺省时用 ${vendor.defaultModel || '厂商默认'}）。`;
+        }
+      }
     },
 
     // 渲染常用语选择入口和预览；弹层列表用普通 DOM 承载长文本，避免原生 select 撑宽面板。
@@ -4103,9 +4164,7 @@
     });
   }
 
-  // 本地 Ollama 预设：智能匹配的默认后端，参数写死，用户无需配置任何接口字段。
-  // 仅当用户勾选「改用自定义接口」时才使用下方 smartMatchApi* 配置。
-  const OLLAMA_GENERATE_URL = 'http://localhost:11434/api/generate';
+  // 本地 Ollama 预设：提示词与默认模型名，接口地址现由 JD_MATCH_VENDORS.ollama.baseUrl 提供。
   const OLLAMA_DEFAULT_MODEL = 'llama3';
   const OLLAMA_MATCH_PROMPT = '你是招聘匹配助手。根据下方岗位JD与求职者画像评估匹配度，只输出一个0到100之间的整数，不要任何解释或标点。\n岗位：{jobName} @ {company}\nJD：{postDescription}\n求职者：{profile}';
 
@@ -4195,71 +4254,52 @@
       };
     },
 
-    // 智能匹配：把岗位 JD 与用户描述发给外部接口，由接口返回 0-100 匹配度。
-    async evaluateSmart(job, options) {
-      const opts = options || {};
-      const threshold = Number(opts.threshold);
-      const useCustomApi = Boolean(opts.useCustomApi);
-      const model = normalizeText(opts.model) || OLLAMA_DEFAULT_MODEL;
-
-      // 自定义接口使用用户填写的 URL；否则使用写死的本地 Ollama 预设。
-      const url = useCustomApi ? normalizeText(opts.apiUrl) : OLLAMA_GENERATE_URL;
-      if (!url) throw new Error('智能匹配接口地址为空');
-
-      const method = useCustomApi ? String(opts.apiMethod || 'POST').toUpperCase() : 'POST';
-      const responsePath = useCustomApi ? (normalizeText(opts.apiResponsePath) || '') : 'response';
-
-      const jobForInterp = Object.assign({}, job, { profile: opts.profile || '', model });
-      const headers = useCustomApi
-        ? normalizeHeaderMap(
-          interpolateStructuredValue(parseKeyValueConfig(opts.apiHeaders || '', '请求头'), jobForInterp),
-        )
-        : {};
-      const params = useCustomApi
-        ? interpolateStructuredValue(parseKeyValueConfig(opts.apiParams || '', 'URL 参数'), jobForInterp)
-        : {};
-      const requestUrl = appendQueryParams(interpolateText(url, jobForInterp), params);
-
-      let requestBody;
-      if (useCustomApi && normalizeText(opts.apiBody)) {
-        const parsed = parseRequestBodyConfig(opts.apiBody, '请求体');
-        requestBody = interpolateStructuredValue(parsed, jobForInterp);
-        if (typeof requestBody !== 'string') requestBody = JSON.stringify(requestBody);
-      } else {
-        // 本地 Ollama 预设请求体：模型名 + 写死的提示词，要求只输出 0-100 整数分数。
-        requestBody = JSON.stringify({
-          model,
-          stream: false,
-          prompt: interpolateText(OLLAMA_MATCH_PROMPT, jobForInterp),
-        });
-      }
-
-      const responseText = await new Promise((resolve, reject) => {
+    // 统一发送智能匹配请求，包装 GM_xmlhttpRequest。
+    sendMatchRequest({ method, url, headers, body }) {
+      return new Promise((resolve, reject) => {
         GM_xmlhttpRequest({
           method,
-          url: requestUrl,
-          headers: Object.keys(headers).length ? headers : undefined,
-          data: method === 'GET' || method === 'HEAD' ? undefined : requestBody,
+          url,
+          headers: Object.keys(headers || {}).length ? headers : undefined,
+          data: method === 'GET' || method === 'HEAD' ? undefined : body,
           timeout: 30000,
           onload(res) {
-            if (res.status >= 200 && res.status < 300) resolve(res.responseText || '');
-            else reject(new Error(`匹配接口返回 HTTP ${res.status}`));
+            if (res.status >= 200 && res.status < 300) {
+              resolve(res.responseText || '');
+              return;
+            }
+            // 提炼常见状态码的可操作提示，避免只抛一个冷冰冰的数字。
+            let hint = '';
+            if (res.status === 400) hint = '（请求参数有误，可能是模型名不被支持）';
+            else if (res.status === 401) hint = '（API Key 无效或已过期，请重新检查密钥）';
+            else if (res.status === 402) hint = '（账户余额不足 / 未开通付费，请到对应厂商控制台充值后再试）';
+            else if (res.status === 403) hint = '（无权限，密钥可能无权访问该模型或接口）';
+            else if (res.status === 404) hint = '（接口地址或模型名不存在，请检查厂商与模型名称）';
+            else if (res.status === 429) hint = '（请求过于频繁已被限流，请稍后重试）';
+            let detail = '';
+            try {
+              const raw = String(res.responseText || '').trim();
+              if (raw) {
+                // 尽量取厂商返回的 message 字段，便于定位；超出长度则截断。
+                let msg = raw;
+                try {
+                  const parsed = JSON.parse(raw);
+                  msg = parsed && parsed.error && (parsed.error.message || parsed.error.code) ? String(parsed.error.message) : raw;
+                } catch (_) {}
+                detail = `：${msg.slice(0, 240)}`;
+              }
+            } catch (_) {}
+            reject(new Error(`匹配接口返回 HTTP ${res.status}${hint}${detail}`));
           },
-          onerror() { reject(new Error('智能匹配接口请求失败')); },
-          ontimeout() { reject(new Error('智能匹配接口超时')); },
+          onerror() { reject(new Error('智能匹配接口请求失败（可能是网络不通或跨域被拦截）')); },
+          ontimeout() { reject(new Error('智能匹配接口超时（30s 内无响应）')); },
         });
       });
+    },
 
-      let json;
-      try {
-        json = JSON.parse(responseText);
-      } catch (_) {
-        json = { score: Number(String(responseText).replace(/[^\d.]/g, '')) };
-      }
-
-      const score = this.extractScore(json, responsePath);
+    // 由分数与阈值拼装统一的智能匹配结果。
+    buildSmartResult(score, threshold) {
       const matchedBool = score >= (Number.isFinite(threshold) ? threshold : 0);
-
       return {
         mode: 'smart',
         matched: matchedBool,
@@ -4272,6 +4312,88 @@
           ? `智能匹配度 ${score}%`
           : `智能匹配度 ${score}% 低于阈值 ${threshold}%`,
       };
+    },
+
+    // 智能匹配：根据所选厂商自动拼装请求，无需用户关心 URL/请求头/请求体。
+    async evaluateSmart(job, options) {
+      const opts = options || {};
+      const threshold = Number(opts.threshold);
+      const vendorKey = normalizeText(opts.vendor) || 'ollama';
+      const vendor = JD_MATCH_VENDORS[vendorKey] || JD_MATCH_VENDORS.custom;
+      const apiKey = normalizeText(opts.apiKey) || '';
+      const model = normalizeText(opts.model) || vendor.defaultModel || OLLAMA_DEFAULT_MODEL;
+
+      // 自定义接口：完全由用户配置 URL/方法/参数/头/体/返回路径。
+      if (vendor.kind === 'custom') {
+        return this.evaluateSmartCustom(job, opts, threshold, model);
+      }
+
+      // 本地 Ollama：无需 Key，调用 /api/generate，提示词要求只输出 0-100 整数。
+      if (vendor.kind === 'ollama') {
+        if (!normalizeText(model)) throw new Error('智能匹配需要填写本地 Ollama 模型名称');
+        const requestBody = JSON.stringify({
+          model,
+          stream: false,
+          prompt: interpolateText(OLLAMA_MATCH_PROMPT, Object.assign({}, job, { profile: opts.profile || '', model })),
+        });
+        const responseText = await this.sendMatchRequest({ method: 'POST', url: vendor.baseUrl, body: requestBody });
+        let json;
+        try { json = JSON.parse(responseText); } catch (_) { json = { response: responseText }; }
+        const score = this.extractScore(json, vendor.responsePath || 'response');
+        return this.buildSmartResult(score, threshold);
+      }
+
+      // OpenAI 兼容云厂商：仅需厂商 + API Key，脚本自动拼装 chat/completions 请求。
+      if (!apiKey) throw new Error(`请填写「${vendor.label}」的 API Key`);
+      const headers = { 'Content-Type': 'application/json' };
+      headers[vendor.authHeader || 'Authorization'] = `Bearer ${apiKey}`;
+      const messages = [
+        { role: 'system', content: '你是招聘匹配助手。根据岗位JD与求职者画像评估匹配度，只输出一个0到100之间的整数，不要任何解释或标点。' },
+        { role: 'user', content: `岗位：${job.jobName || ''} @ ${job.company || ''}\nJD：${this.extractCorpus(job)}\n求职者：${opts.profile || ''}` },
+      ];
+      const requestBody = JSON.stringify({ model, messages, temperature: 0, stream: false });
+      const responseText = await this.sendMatchRequest({
+        method: 'POST',
+        url: vendor.baseUrl,
+        headers,
+        body: requestBody,
+      });
+      let json;
+      try { json = JSON.parse(responseText); } catch (_) { json = { text: responseText }; }
+      const score = this.extractScore(json, vendor.responsePath || 'choices.0.message.content');
+      return this.buildSmartResult(score, threshold);
+    },
+
+    // 自定义接口智能匹配（高级）：URL/方法/参数/头/体/返回路径完全由用户决定。
+    async evaluateSmartCustom(job, opts, threshold, model) {
+      const url = normalizeText(opts.apiUrl);
+      if (!url) throw new Error('自定义匹配接口地址为空');
+      const method = String(opts.apiMethod || 'POST').toUpperCase();
+      const responsePath = normalizeText(opts.apiResponsePath) || '';
+      const jobForInterp = Object.assign({}, job, { profile: opts.profile || '', model });
+      const headers = normalizeHeaderMap(
+        interpolateStructuredValue(parseKeyValueConfig(opts.apiHeaders || '', '请求头'), jobForInterp),
+      );
+      const params = interpolateStructuredValue(parseKeyValueConfig(opts.apiParams || '', 'URL 参数'), jobForInterp);
+      const requestUrl = appendQueryParams(interpolateText(url, jobForInterp), params);
+      let requestBody;
+      if (normalizeText(opts.apiBody)) {
+        const parsed = parseRequestBodyConfig(opts.apiBody, '请求体');
+        requestBody = interpolateStructuredValue(parsed, jobForInterp);
+        if (typeof requestBody !== 'string') requestBody = JSON.stringify(requestBody);
+      } else {
+        requestBody = JSON.stringify({
+          jobName: job.jobName,
+          company: job.company,
+          postDescription: job.postDescription,
+          profile: opts.profile || '',
+        });
+      }
+      const responseText = await this.sendMatchRequest({ method, url: requestUrl, headers, body: requestBody });
+      let json;
+      try { json = JSON.parse(responseText); } catch (_) { json = { score: Number(String(responseText).replace(/[^\d.]/g, '')) }; }
+      const score = this.extractScore(json, responsePath);
+      return this.buildSmartResult(score, threshold);
     },
 
     // 从接口响应中提取 0-100 分数；支持显式路径或自动识别常见字段。
@@ -4322,7 +4444,12 @@
 
     // 组装除阈值外的配置指纹；阈值变化只影响结论，不影响分数。
     buildSignature() {
-      if (config.smartMatchMode === 'smart' && config.smartMatchUseCustomApi) {
+      if (config.smartMatchMode !== 'smart') {
+        return ['manual', config.smartMatchProfile].join('~');
+      }
+      const vendorKey = normalizeText(config.smartMatchVendor) || 'ollama';
+      const vendor = JD_MATCH_VENDORS[vendorKey] || JD_MATCH_VENDORS.custom;
+      if (vendor.kind === 'custom') {
         return [
           'smart-custom',
           config.smartMatchProfile,
@@ -4334,10 +4461,10 @@
           config.smartMatchApiResponsePath,
         ].join('~');
       }
-      if (config.smartMatchMode === 'smart') {
+      if (vendor.kind === 'ollama') {
         return ['smart-ollama', config.smartMatchProfile, config.smartMatchModel].join('~');
       }
-      return ['manual', config.smartMatchProfile].join('~');
+      return ['smart-vendor', vendorKey, config.smartMatchApiKey, config.smartMatchProfile, config.smartMatchModel].join('~');
     },
 
     // 组装传给 JdMatchService 的评估参数，与主流程保持一致。
@@ -4346,7 +4473,8 @@
         mode: config.smartMatchMode,
         profile: config.smartMatchProfile,
         threshold: Number(config.smartMatchThreshold) || 0,
-        useCustomApi: config.smartMatchUseCustomApi,
+        vendor: config.smartMatchVendor,
+        apiKey: config.smartMatchApiKey,
         model: config.smartMatchModel,
         apiUrl: config.smartMatchApiUrl,
         apiMethod: config.smartMatchApiMethod,
@@ -4985,7 +5113,8 @@
             mode: config.smartMatchMode,
             profile: config.smartMatchProfile,
             threshold: Number(config.smartMatchThreshold) || 0,
-            useCustomApi: config.smartMatchUseCustomApi,
+            vendor: config.smartMatchVendor,
+            apiKey: config.smartMatchApiKey,
             model: config.smartMatchModel,
             apiUrl: config.smartMatchApiUrl,
             apiMethod: config.smartMatchApiMethod,
@@ -8570,7 +8699,9 @@
         return '手动匹配需要填写技能/关键词';
       }
       if (config.smartMatchMode === 'smart') {
-        if (config.smartMatchUseCustomApi) {
+        const vendorKey = normalizeText(config.smartMatchVendor) || 'ollama';
+        const vendor = JD_MATCH_VENDORS[vendorKey] || JD_MATCH_VENDORS.custom;
+        if (vendor.kind === 'custom') {
           if (!config.smartMatchApiUrl) return '自定义接口需要填写接口地址';
           try {
             parseKeyValueConfig(config.smartMatchApiParams, 'URL 参数');
@@ -8585,8 +8716,10 @@
           if (config.smartMatchApiResponsePath && !isLikelyResponsePath(config.smartMatchApiResponsePath)) {
             return '匹配分数路径格式不正确';
           }
-        } else if (!normalizeText(config.smartMatchModel)) {
-          return '智能匹配需要填写本地 Ollama 模型名称';
+        } else if (vendor.kind === 'ollama') {
+          if (!normalizeText(config.smartMatchModel)) return '智能匹配需要填写本地 Ollama 模型名称';
+        } else if (!normalizeText(config.smartMatchApiKey)) {
+          return `请填写「${vendor.label}」的 API Key`;
         }
       } else if (config.smartMatchMode !== 'manual') {
         return 'JD 匹配方式无效';
